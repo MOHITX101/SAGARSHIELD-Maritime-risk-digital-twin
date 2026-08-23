@@ -9,7 +9,6 @@ class DynamicGeopoliticalRiskAgent:
     using Groq LLM inference with structured JSON responses.
     """
     def __init__(self, api_key: str = None):
-        # Retrieve key explicitly from Streamlit secrets or environment
         self.api_key = api_key
         
         if not self.api_key:
@@ -18,7 +17,6 @@ class DynamicGeopoliticalRiskAgent:
             except Exception:
                 self.api_key = os.getenv("GROQ_API_KEY")
 
-        # Initialize Groq client
         try:
             if self.api_key and "gsk_" in self.api_key:
                 self.client = Groq(api_key=self.api_key)
@@ -31,10 +29,6 @@ class DynamicGeopoliticalRiskAgent:
             self.client = None
 
     def analyze_news_and_calculate_risk(self, news_text: str) -> dict:
-        """
-        Processes headline text via Groq LLMs to return corridor risk scores.
-        Attempts multiple model identifiers before defaulting to heuristic rules.
-        """
         if not self.client:
             return self._heuristic_fallback(news_text)
 
@@ -64,52 +58,40 @@ News Feed Input:
 {news_text}
 """
 
-        # Primary and backup Groq models
-        candidate_models = [
-            "openai/gpt-oss-120b",
-            "qwen/qwen3.6-27b",
-            "llama-3.3-70b-versatile"
-        ]
+        try:
+            print("🚀 [RiskAgent] Sending payload to Groq API via model `openai/gpt-oss-120b`...")
+            response = self.client.chat.completions.create(
+                model="openai/gpt-oss-120b",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.0,
+                response_format={"type": "json_object"}
+            )
 
-        for model_id in candidate_models:
-            try:
-                print(f"🚀 [RiskAgent] Attempting payload delivery with model: {model_id}...")
-                response = self.client.chat.completions.create(
-                    model=model_id,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=0.0,
-                    response_format={"type": "json_object"}
-                )
+            raw_content = response.choices[0].message.content.strip()
+            parsed_data = json.loads(raw_content)
 
-                raw_content = response.choices[0].message.content.strip()
-                parsed_data = json.loads(raw_content)
+            required_keys = [
+                "Strait of Hormuz", 
+                "Red Sea / Bab-el-Mandeb", 
+                "Cape of Good Hope", 
+                "Malacca Strait"
+            ]
 
-                required_keys = [
-                    "Strait of Hormuz", 
-                    "Red Sea / Bab-el-Mandeb", 
-                    "Cape of Good Hope", 
-                    "Malacca Strait"
-                ]
+            for key in required_keys:
+                if key not in parsed_data:
+                    raise KeyError(f"Missing corridor key in LLM JSON payload: {key}")
 
-                for key in required_keys:
-                    if key not in parsed_data:
-                        raise KeyError(f"Missing corridor key in LLM JSON payload: {key}")
+            print("✅ [RiskAgent] Groq API response successfully received and parsed.")
+            return parsed_data
 
-                print(f"✅ [RiskAgent] Successfully generated risk metrics via model `{model_id}`.")
-                return parsed_data
-
-            except Exception as err:
-                print(f"⚠️ [RiskAgent] Model `{model_id}` failed: {err}")
-                continue  # Try next model in sequence
-
-        print("❌ [RiskAgent] All API candidate models failed. Executing local heuristic fallback.")
-        return self._heuristic_fallback(news_text)
+        except Exception as err:
+            print(f"❌ [RiskAgent] API Request Failed: {err}. Executing local fallback logic.")
+            return self._heuristic_fallback(news_text)
 
     def _heuristic_fallback(self, news_text: str) -> dict:
-        """Rule-based parsing executed whenever Groq API calls fail."""
         text_lower = news_text.lower()
         threat_keywords = ["attack", "drone", "missile", "seized", "disruption", "war", "security", "deadly", "houthi"]
 
